@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Meus Cursos</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="shell">
+  <aside id="nav" aria-label="Menu principal">
+    <div class="nav-head">
+      <a class="brand" href="#/"><span class="logo">🎓</span><span class="lbl">Meus Cursos</span></a>
+      <button id="btnCollapse" class="icon-btn" type="button" aria-label="Recolher menu" title="Recolher menu">‹</button>
+    </div>
+    <nav class="nav-list">
+      <a href="#/" data-route="home"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg><span class="lbl">Home</span></a>
+      <a href="#/continuar" data-route="continuar"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg><span class="lbl">Continuar assistindo</span></a>
+      <a href="#/fornecedores" data-route="fornecedores"><svg viewBox="0 0 24 24"><path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/></svg><span class="lbl">Fornecedores</span></a>
+    </nav>
+    <div class="nav-spacer"></div>
+    <nav class="nav-list nav-tools">
+      <button id="btnSync" type="button"><svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg><span class="lbl">Sincronizar Drive</span></button>
+      <button id="btnBackup" type="button"><svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H5V5h10v4z"/></svg><span class="lbl">Backup</span></button>
+      <button id="btnSettings" type="button"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.488.488 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.6 3.6 0 0112 15.6z"/></svg><span class="lbl">Configurações</span></button>
+    </nav>
+    <div class="user"><span class="avatar" id="avatar">?</span><span class="lbl" id="userName">Não conectado</span></div>
+  </aside>
+  <div id="scrim" hidden></div>
+
+  <div id="content">
+    <header class="topbar">
+      <button id="btnMenu" class="icon-btn menu-only" type="button" aria-label="Abrir menu">☰</button>
+      <input id="search" type="search" placeholder="Buscar aula…" aria-label="Buscar aula">
+    </header>
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+    <main id="app"></main>
+  </div>
+</div>
+
+<dialog id="dlgSettings">
+  <form method="dialog" id="formSettings">
+    <h2>Configurações</h2>
+    <label>OAuth Client ID (Google Cloud)
+      <input id="inClient" type="text" placeholder="xxxx.apps.googleusercontent.com" required>
+    </label>
+    <label>Pasta raiz do Drive (link ou ID)
+      <input id="inRoot" type="text" placeholder="https://drive.google.com/drive/folders/..." required>
+    </label>
+    <p class="hint">Estrutura: <code>Raiz / Curso / Módulo / aula.mp4</code>. Opcional: uma imagem chamada <code>capa.jpg</code> dentro da pasta do módulo vira a capa do card.</p>
+    <div class="row">
+      <button type="button" id="btnCancelSettings">Cancelar</button>
+      <button type="submit" class="primary">Salvar e conectar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgBackup">
+  <h2>Backup</h2>
+  <p class="hint">Progresso e fornecedores (com PDFs) ficam salvos neste navegador. Exporte para levar a outro dispositivo ou navegador.</p>
+  <div class="row">
+    <button type="button" id="btnExport">Exportar JSON</button>
+    <label class="filebtn">Importar JSON<input id="fileImport" type="file" accept="application/json" hidden></label>
+    <button type="button" id="btnCloseBackup">Fechar</button>
+  </div>
+</dialog>
+
+<dialog id="dlgSup">
+  <form id="formSup">
+    <h2 id="supTitle">Novo fornecedor</h2>
+    <label>Nome *
+      <input id="supName" type="text" required maxlength="120">
+    </label>
+    <label>Nicho *
+      <input id="supNiche" type="text" required maxlength="60" list="nicheList" placeholder="Ex.: Eletrônicos, Pet, Casa…">
+      <datalist id="nicheList"></datalist>
+    </label>
+    <label>Contato
+      <input id="supContact" type="text" maxlength="160" placeholder="WhatsApp, telefone ou e-mail">
+    </label>
+    <label>Site
+      <input id="supSite" type="text" maxlength="200" placeholder="www.exemplo.com.br">
+    </label>
+    <label>Catálogo (PDF)
+      <input id="supPdf" type="file" accept="application/pdf">
+    </label>
+    <div id="supPdfCurrent" class="hint" hidden>
+      <span id="supPdfName"></span>
+      <label class="inline"><input type="checkbox" id="supPdfRemove"> remover PDF</label>
+    </div>
+    <p id="supErr" class="err" hidden></p>
+    <div class="row">
+      <button type="button" id="btnCancelSup">Cancelar</button>
+      <button type="submit" class="primary">Salvar</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</body>
+</html>
