@@ -3,6 +3,7 @@
  *  GRG Cursos — front-end estático (GitHub Pages)
  *  - Vários cursos: cada pasta do Drive adicionada = 1 curso; subpastas = módulos
  *  - Home: cards dos cursos | Curso: módulos em carrossel | Aula: player
+ *  - Player: <video> nativo + Service Worker (sw.js) que repassa o token ao Drive
  *  - Progresso: localStorage | Fornecedores, capas e títulos editados: IndexedDB
  * ===================================================================== */
 
@@ -11,14 +12,17 @@ const LS = { settings: 'cd.settings', cache: 'cd.cache', progress: 'cd.progress'
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
+const DEFAULT_API = 'https://www.googleapis.com/drive/v3';
+const API = window.__API_BASE || DEFAULT_API;
+
 let settings = load(LS.settings, {});
 settings.clientId ||= '';
 if (!Array.isArray(settings.roots)) settings.roots = settings.rootId ? [{ id: settings.rootId, name: '' }] : []; // migra versão antiga
 delete settings.rootId;
-let cache = load(LS.cache, { v: 2, courses: [], syncedAt: null });
-if (cache.v !== 2) cache = { v: 2, courses: [], syncedAt: null }; // estrutura antiga: precisa sincronizar de novo
-let progress = load(LS.progress, { done: {}, last: {}, lastAt: {}, lastOpened: null });
-progress.done ||= {}; progress.last ||= {}; progress.lastAt ||= {};
+let cache = load(LS.cache, { v: 3, courses: [], syncedAt: null });
+if (cache.v !== 3) cache = { v: 3, courses: [], syncedAt: null }; // estrutura antiga: precisa sincronizar de novo
+let progress = load(LS.progress, { done: {}, last: {}, lastAt: {}, pos: {}, lastOpened: null });
+progress.done ||= {}; progress.last ||= {}; progress.lastAt ||= {}; progress.pos ||= {};
 let user = load(LS.user, null);
 let token = null, tokenExpires = 0;
 let hideDone = false, panelOpen = true;
@@ -76,22 +80,26 @@ function ensureGis() {
     })();
   });
 }
-async function getToken() {
-  if (token && Date.now() < tokenExpires - 30000) return token;
-  if (!settings.clientId) throw new Error('Configure o Client ID primeiro.');
-  await ensureGis();
-  return new Promise((resolve, reject) => {
-    const tc = google.accounts.oauth2.initTokenClient({
-      client_id: settings.clientId,
-      scope: 'https://www.googleapis.com/auth/drive.readonly',
-      callback: r => {
-        if (r.error) return reject(new Error('Login falhou: ' + r.error));
-        token = r.access_token; tokenExpires = Date.now() + r.expires_in * 1000; resolve(token);
-      },
-      error_callback: e => reject(new Error('Login cancelado ou bloqueado (' + (e.type || 'popup') + ').')),
+let tokenPending = null;
+function getToken() {
+  if (token && Date.now() < tokenExpires - 30000) return Promise.resolve(token);
+  if (tokenPending) return tokenPending;
+  if (!settings.clientId) return Promise.reject(new Error('Configure o Client ID primeiro.'));
+  return tokenPending = (async () => {
+    await ensureGis();
+    return new Promise((resolve, reject) => {
+      const tc = google.accounts.oauth2.initTokenClient({
+        client_id: settings.clientId,
+        scope: 'https://www.googleapis.com/auth/drive.readonly',
+        callback: r => {
+          if (r.error) return reject(new Error('Login falhou: ' + r.error));
+          token = r.access_token; tokenExpires = Date.now() + r.expires_in * 1000; resolve(token);
+        },
+        error_callback: e => reject(new Error('Login cancelado ou bloqueado (' + (e.type || 'popup') + ').')),
+      });
+      tc.requestAccessToken({ prompt: user ? '' : 'consent' });
     });
-    tc.requestAccessToken({ prompt: user ? '' : 'consent' });
-  });
+  })().finally(() => { tokenPending = null; });
 }
 async function gfetch(url) {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -110,7 +118,7 @@ async function driveList(parentId) {
       pageSize: '1000', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',
     });
     if (pageToken) p.set('pageToken', pageToken);
-    const j = await gfetch('https://www.googleapis.com/drive/v3/files?' + p);
+    const j = await gfetch(`${API}/files?` + p);
     out.push(...j.files); pageToken = j.nextPageToken || '';
   } while (pageToken);
   return out;
@@ -134,9 +142,17 @@ async function scanModule(folderId, path, acc) {
   for (const d of files.filter(isFolder)) await scanModule(d.id, [...path, d.name], acc);
 }
 async function syncRoot(rootId, label) {
-  const meta = await gfetch(`https://www.googleapis.com/drive/v3/files/${rootId}?fields=id,name&supportsAllDrives=true`);
-  const top = await driveList(rootId);
-  const course = { id: rootId, name: meta.name, cover: coverOf(top.find(isCover)), modules: [] };
+  const meta = await gfetch(`${API}/files/${rootId}?fields=id,name&supportsAllDrives=true`);
+  let name = meta.name, folderId = rootId, top = await driveList(rootId);
+  // Pasta "embrulho": sem vídeos e com uma única subpasta que já contém módulos → desce uma camada
+  for (let depth = 0; depth < 2; depth++) {
+    const subs = top.filter(isFolder);
+    if (top.some(isVideo) || subs.length !== 1) break;
+    const inner = await driveList(subs[0].id);
+    if (!inner.some(isFolder)) break;
+    name = subs[0].name; folderId = subs[0].id; top = inner;
+  }
+  const course = { id: rootId, name, cover: coverOf(top.find(isCover)), modules: [] };
   const loose = top.filter(isVideo).map(f => toLesson(f, '')).sort(byLesson);
   if (loose.length) course.modules.push({ id: '_root', name: 'Aulas gerais', lessons: loose, cover: thumbOf(loose) });
   const folders = top.filter(isFolder).sort((a, b) => collator.compare(a.name, b.name));
@@ -151,7 +167,7 @@ async function syncRoot(rootId, label) {
 }
 async function fetchUser() {
   try {
-    const j = await gfetch('https://www.googleapis.com/drive/v3/about?fields=user(displayName,photoLink)');
+    const j = await gfetch(`${API}/about?fields=user(displayName,photoLink)`);
     user = { name: j.user?.displayName || 'Conectado', photo: j.user?.photoLink || '' }; save(LS.user, user); paintUser();
   } catch { /* opcional */ }
 }
@@ -170,7 +186,7 @@ async function sync() {
         const old = cache.courses.find(x => x.id === r.id); if (old) courses.push(old);
       }
     }
-    cache = { v: 2, courses, syncedAt: Date.now() }; save(LS.cache, cache); save(LS.settings, settings);
+    cache = { v: 3, courses, syncedAt: Date.now() }; save(LS.cache, cache); save(LS.settings, settings);
     await fetchUser();
     if (errors.length) setStatus('Alguns cursos falharam — ' + errors.join(' | '), true);
     else setStatus(`Sincronizado: ${courses.length} curso(s), ${courses.reduce((n, c) => n + lessonsOf(c).length, 0)} aula(s).`, false, 3500);
@@ -326,10 +342,7 @@ function viewCourseHome(cid) {
       el('div', {}, el('h1', {}, courseTitle(c)),
         el('div', { class: 'hint' }, `${c.modules.length} módulo${c.modules.length === 1 ? '' : 's'} · ${st.done}/${st.total} aulas · ${st.pct}% concluído` + (st.remainMs ? ` · faltam ${fmtDur(st.remainMs)}` : ''))),
       target ? el('a', { class: 'primary btn', href: lessonHref(c, target) }, last ? '▶ Continuar' : '▶ Começar') : null));
-  if (q) {
-    const hits = searchHits([c], q);
-    return app.append(...hitsView(hits));
-  }
+  if (q) return app.append(...hitsView(searchHits([c], q)));
   app.append(el('section', { class: 'section' },
     el('div', { class: 'section-head' }, el('h2', {}, 'Módulos'), el('small', {}, 'arraste ou use as setas')),
     carousel(c.modules.map((m, i) => {
@@ -351,7 +364,79 @@ function viewContinue() {
   app.append(items.length ? el('div', { class: 'grid' }, items.map(({ c, l }) => lessonCard(c, l))) : el('p', { class: 'empty' }, 'Você ainda não assistiu nenhuma aula.'));
 }
 
-/* player */
+/* ---------- player de vídeo ---------- */
+// O iframe do Drive pede login quando o navegador bloqueia cookies de terceiros (Brave, Safari…).
+// Aqui o vídeo toca num <video> nativo; o Service Worker (sw.js) adiciona o token OAuth às requisições ao Drive.
+let swScope = null;
+async function ensureSW() {
+  if (swScope) return swScope;
+  if (!('serviceWorker' in navigator)) throw new Error('sw');
+  const reg = await navigator.serviceWorker.register('sw.js?v=4');
+  await navigator.serviceWorker.ready;
+  if (!navigator.serviceWorker.controller) {
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error('sw')), 4000);
+      navigator.serviceWorker.addEventListener('controllerchange', () => { clearTimeout(t); res(); }, { once: true });
+    });
+  }
+  return swScope = reg.scope;
+}
+const driveLink = id => `https://drive.google.com/file/d/${id}/view`;
+function stopVideos() { $$('video').forEach(v => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* ok */ } }); }
+function frameMsg(frame, text, btn) { frame.replaceChildren(el('div', { class: 'pmsg' }, el('p', {}, text), btn || null)); }
+function iframeFallback(frame, cur, note, why) {
+  frame.replaceChildren(el('iframe', { src: `https://drive.google.com/file/d/${cur.id}/preview`, allow: 'autoplay; fullscreen', allowfullscreen: true, title: cur.name }));
+  note.replaceChildren(why + ' Se pedir login, use ', el('a', { class: 'dlink', href: driveLink(cur.id), target: '_blank', rel: 'noopener' }, 'Abrir no Drive ↗'), '.');
+  note.hidden = false;
+}
+async function mountPlayer(frame, cur, note) {
+  const alive = () => ctx && ctx.cur === cur && frame.isConnected;
+  note.hidden = true; frameMsg(frame, 'Carregando vídeo…');
+  let scope, tok, meta;
+  try { scope = await ensureSW(); }
+  catch { return iframeFallback(frame, cur, note, 'A reprodução direta não está disponível agora (tente recarregar a página com F5).'); }
+  try { tok = await getToken(); }
+  catch (e) {
+    if (!alive()) return;
+    return frameMsg(frame, 'Entre com sua conta Google para assistir a aula aqui. ' + (e.message || ''),
+      el('button', { class: 'primary', type: 'button', onclick: () => mountPlayer(frame, cur, note) }, 'Entrar com Google'));
+  }
+  if (!alive()) return;
+  try { meta = await gfetch(`${API}/files/${cur.id}?fields=size,mimeType&supportsAllDrives=true`); }
+  catch (e) { if (alive()) iframeFallback(frame, cur, note, 'Não foi possível acessar o arquivo pela API (' + e.message.slice(0, 80) + ').'); return; }
+  if (!alive()) return;
+  const size = Number(meta.size);
+  if (!size) return iframeFallback(frame, cur, note, 'Este arquivo não pode ser reproduzido diretamente.');
+
+  const u = new URL('stream/' + cur.id, scope);
+  u.searchParams.set('t', tok); u.searchParams.set('s', size); u.searchParams.set('m', meta.mimeType || 'video/mp4');
+  if (API !== DEFAULT_API) u.searchParams.set('b', API);
+  const v = el('video', { controls: true, playsinline: true, preload: 'metadata', src: u.href });
+  const pos = progress.pos[cur.id];
+  v.addEventListener('loadedmetadata', () => { if (pos > 5 && v.duration && pos < v.duration - 10) v.currentTime = pos; }, { once: true });
+  let lastSave = 0;
+  const savePos = force => {
+    const now = Date.now(); if (!force && now - lastSave < 5000) return; lastSave = now;
+    if (v.currentTime > 5 && !v.ended) { progress.pos[cur.id] = Math.floor(v.currentTime); save(LS.progress, progress); }
+  };
+  v.addEventListener('timeupdate', () => savePos(false));
+  v.addEventListener('pause', () => savePos(true));
+  v.addEventListener('ended', () => {
+    delete progress.pos[cur.id]; setDone(cur.id, true);
+    if (alive()) refreshPlayer();
+  });
+  v.addEventListener('error', () => {
+    if (!alive()) return;
+    savePos(true);
+    if (Date.now() >= tokenExpires - 5000) {
+      return frameMsg(frame, 'Sua sessão com o Google expirou. Reconecte para continuar de onde parou.',
+        el('button', { class: 'primary', type: 'button', onclick: () => mountPlayer(frame, cur, note) }, 'Reconectar'));
+    }
+    iframeFallback(frame, cur, note, 'Este vídeo não pôde ser reproduzido diretamente (formato não suportado pelo navegador ou acesso recusado).');
+  });
+  frame.replaceChildren(v);
+}
+
 function buildSide(c, cur) {
   const q = $('#search').value.trim().toLowerCase(), s = stats(lessonsOf(c));
   const side = el('aside', { class: 'side' });
@@ -397,13 +482,15 @@ function viewPlayer(cid, lid) {
   const inMod = all.filter(l => l.mid === cur.mid), pos = inMod.findIndex(l => l.id === cur.id) + 1;
   const chk = el('input', { type: 'checkbox', id: 'curDone', checked: isDone(cur.id) });
   chk.addEventListener('change', () => { setDone(cur.id, chk.checked); refreshPlayer(); });
+  const frame = el('div', { class: 'frame' }), note = el('p', { class: 'pnote', hidden: true, role: 'status' });
 
   const player = el('section', { class: 'player' },
     el('div', { class: 'backbar' }, el('a', { href: '#/curso/' + c.id, 'aria-label': 'Voltar ao curso', title: 'Voltar ao curso' }, '←'), el('span', {}, courseTitle(c))),
-    el('div', { class: 'frame' }, el('iframe', { src: `https://drive.google.com/file/d/${cur.id}/preview`, allow: 'autoplay; fullscreen', allowfullscreen: true, title: cur.name })),
+    frame,
     el('div', { class: 'info' },
-      el('div', { class: 'kicker' }, `${cur.mtitle} · aula ${pos} de ${inMod.length}` + (cur.dur ? ` · ${fmtDur(cur.dur)}` : '')),
-      el('h2', {}, cur.name),
+      el('div', { class: 'kicker' }, el('span', {}, `${cur.mtitle} · aula ${pos} de ${inMod.length}` + (cur.dur ? ` · ${fmtDur(cur.dur)}` : '')),
+        el('a', { class: 'dlink', href: driveLink(cur.id), target: '_blank', rel: 'noopener' }, '↗ Abrir no Drive')),
+      el('h2', {}, cur.name), note,
       el('div', { class: 'controls' },
         el('label', { class: 'check', for: 'curDone' }, chk, 'Aula concluída'),
         el('span', { class: 'grow' }),
@@ -414,6 +501,7 @@ function viewPlayer(cid, lid) {
   app.replaceChildren(el('div', { class: 'watch' + (panelOpen ? '' : ' nopanel') }, player, buildSide(c, cur)));
   const s = $('.side'); if (s) s.hidden = !panelOpen;
   $('.side .current')?.scrollIntoView({ block: 'center' });
+  mountPlayer(frame, cur, note);
 }
 // atualiza só a lista lateral e o checkbox, sem recarregar o vídeo
 function refreshPlayer() {
@@ -598,7 +686,7 @@ function render() {
   const name = route === 'curso' ? 'home' : route || 'home';
   $$('#nav [data-route]').forEach(a => a.classList.toggle('active', a.dataset.route === name));
   $('#search').hidden = route === 'fornecedores';
-  closeNav(); ctx = null;
+  closeNav(); ctx = null; stopVideos();
   if (route === 'curso' && cid) { if (lid) viewPlayer(cid, lid); else viewCourseHome(cid); }
   else if (route === 'continuar') viewContinue();
   else if (route === 'fornecedores') viewSuppliers();
@@ -676,7 +764,7 @@ $('#fileImport').addEventListener('change', async e => {
     const j = JSON.parse(await e.target.files[0].text());
     const p = j.progress || (j.done ? j : null);
     if (!p && !j.suppliers && !j.overrides && !j.roots) throw new Error('formato');
-    if (p) { progress = { done: p.done || {}, last: p.last || {}, lastAt: p.lastAt || {}, lastOpened: p.lastOpened || null }; save(LS.progress, progress); }
+    if (p) { progress = { done: p.done || {}, last: p.last || {}, lastAt: p.lastAt || {}, pos: p.pos || {}, lastOpened: p.lastOpened || null }; save(LS.progress, progress); }
     for (const s of j.suppliers || []) {
       const { pdfBase64, ...rec } = s;
       rec.pdf = pdfBase64 ? b64ToBlob(pdfBase64, 'application/pdf') : null;
