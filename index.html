@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Meus Cursos</title>
+  <title>GRG Cursos</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="shell">
   <aside id="nav" aria-label="Menu principal">
     <div class="nav-head">
-      <a class="brand" href="#/"><span class="logo">🎓</span><span class="lbl">Meus Cursos</span></a>
+      <a class="brand" href="#/"><span class="logo">🎓</span><span class="lbl">GRG Cursos</span></a>
       <button id="btnCollapse" class="icon-btn" type="button" aria-label="Recolher menu" title="Recolher menu">‹</button>
     </div>
     <nav class="nav-list">
@@ -40,25 +40,53 @@
 </div>
 
 <dialog id="dlgSettings">
-  <form method="dialog" id="formSettings">
+  <form id="formSettings" novalidate>
     <h2>Configurações</h2>
     <label>OAuth Client ID (Google Cloud)
-      <input id="inClient" type="text" placeholder="xxxx.apps.googleusercontent.com" required>
+      <input id="inClient" type="text" placeholder="xxxx.apps.googleusercontent.com">
     </label>
-    <label>Pasta raiz do Drive (link ou ID)
-      <input id="inRoot" type="text" placeholder="https://drive.google.com/drive/folders/..." required>
-    </label>
-    <p class="hint">Estrutura: <code>Raiz / Curso / Módulo / aula.mp4</code>. Opcional: uma imagem chamada <code>capa.jpg</code> dentro da pasta do módulo vira a capa do card.</p>
+    <fieldset>
+      <legend>Cursos (uma pasta do Drive por curso)</legend>
+      <ul id="rootList"></ul>
+      <div class="addrow">
+        <input id="inRoot" type="text" placeholder="Link ou ID da pasta do curso" aria-label="Link ou ID da pasta do curso">
+        <button type="button" id="btnAddRoot">Adicionar</button>
+      </div>
+    </fieldset>
+    <p class="hint">Cada pasta adicionada vira um <b>curso</b>; as subpastas dela viram os <b>módulos</b>. Opcional: uma imagem chamada <code>capa.jpg</code> dentro da pasta do curso ou do módulo vira a capa.</p>
+    <p id="setErr" class="err" hidden></p>
     <div class="row">
       <button type="button" id="btnCancelSettings">Cancelar</button>
-      <button type="submit" class="primary">Salvar e conectar</button>
+      <button type="submit" class="primary">Salvar e sincronizar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgEdit">
+  <form id="formEdit">
+    <h2 id="editTitle">Editar módulo</h2>
+    <label>Título
+      <input id="edTitle" type="text" maxlength="80">
+    </label>
+    <div class="cover-edit">
+      <div id="edPreview" class="cover-prev"></div>
+      <div class="cover-actions">
+        <label class="filebtn">Escolher foto da capa<input id="edFile" type="file" accept="image/*" hidden></label>
+        <button type="button" id="edReset">Restaurar padrão</button>
+        <p class="hint">Imagens na vertical (proporção 2:3) ficam melhores.</p>
+      </div>
+    </div>
+    <p id="edErr" class="err" hidden></p>
+    <div class="row">
+      <button type="button" id="btnCancelEdit">Cancelar</button>
+      <button type="submit" class="primary">Salvar</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="dlgBackup">
   <h2>Backup</h2>
-  <p class="hint">Progresso e fornecedores (com PDFs) ficam salvos neste navegador. Exporte para levar a outro dispositivo ou navegador.</p>
+  <p class="hint">Progresso, fornecedores (com PDFs), capas e títulos editados ficam salvos neste navegador. Exporte para levar a outro dispositivo ou navegador.</p>
   <div class="row">
     <button type="button" id="btnExport">Exportar JSON</button>
     <label class="filebtn">Importar JSON<input id="fileImport" type="file" accept="application/json" hidden></label>
